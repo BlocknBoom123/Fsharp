@@ -1,4 +1,4 @@
-﻿type Digit =
+type Digit =
     | One
     | Two
     | Three
@@ -65,6 +65,14 @@ let straightenBlocks x y z f0 f1 f2 =
         )
 
 
+let convertBlock x y z f0 f1 f2 = 
+    Cluster 
+        ( f0 x, f0 y, f0 z
+        , f1 x, f1 y, f1 z
+        , f2 x, f2 y, f2 z
+        )
+
+
 let viewAsRows board =
     (function
     | Rows _ -> board
@@ -101,7 +109,7 @@ let testBoard =
             , Definitely Four, Definitely Five, Definitely Six
             , Definitely Seven, Definitely Eight, Definitely Nine
             )
-    Blocks
+    Rows
         ( newCluster, newCluster, newCluster
         , newCluster, newCluster, newCluster
         , newCluster, newCluster, newCluster
@@ -151,7 +159,24 @@ let viewAsColumns board =
             )
     ) board
 
-let viewAsBlocks = viewAsRows
+let rec viewAsBlocks board =
+    (function
+    | Blocks _ -> board
+    | Columns (a,b,c,d,e,f,g,h,i) ->
+        Blocks
+            ( convertBlock a b c first second third
+            , convertBlock d e f first second third
+            , convertBlock g h i first second third
+            , convertBlock a b c fourth fifth sixth
+            , convertBlock d e f fourth fifth sixth
+            , convertBlock g h i fourth fifth sixth
+            , convertBlock a b c seventh eighth ninth
+            , convertBlock d e f seventh eighth ninth
+            , convertBlock g h i seventh eighth ninth
+            )
+    | Rows (_,_,_,_,_,_,_,_,_) ->
+        viewAsBlocks (viewAsColumns board)
+    ) board
 
 let addLeft digit cell =
     (function
@@ -243,3 +268,268 @@ let insert x cell =
     | _ -> doInsert cell
     ) cell
 
+let remove digit cell =
+    let rec removeMatch remaining =
+        peek remaining 
+        |> andThen (fun item ->
+            if item = digit then // skip it
+                trimLeft remaining
+            else
+                addLeft item (removeMatch (trimLeft remaining))
+            )
+        |> orElse cell
+    (function
+    | FixedValue _ -> cell
+    | _ -> removeMatch cell
+    ) cell
+
+let toggle digit cell =
+    if exists digit cell then
+        remove digit cell
+    else 
+        insert digit cell
+
+let rec withCell board col row func =
+    let withCluster (Cluster (a,b,c,d,e,f,g,h,i)) =
+        if row = 0 then Cluster (func a, b, c, d, e, f, g, h, i)
+        elif row = 1 then Cluster (a, func b, c, d, e, f, g, h, i)
+        elif row = 2 then Cluster (a, b, func c, d, e, f, g, h, i)
+        elif row = 3 then Cluster (a, b, c, func d, e, f, g, h, i)
+        elif row = 4 then Cluster (a, b, c, d, func e, f, g, h, i)
+        elif row = 5 then Cluster (a, b, c, d, e, func f, g, h, i)
+        elif row = 6 then Cluster (a, b, c, d, e, f, func g, h, i)
+        elif row = 7 then Cluster (a, b, c, d, e, f, g, func h, i)
+        elif row = 8 then Cluster (a, b, c, d, e, f, g, h, func i)
+        else Cluster (a,b,c,d,e,f,g,h,i)
+    (function
+    | Rows _ | Blocks _ -> withCell (viewAsColumns board) col row func
+    | Columns (a,b,c,d,e,f,g,h,i) ->
+    if col = 0 then Columns (withCluster a, b, c, d, e, f, g, h, i)
+    elif col = 1 then Columns (a, withCluster b, c, d, e, f, g, h, i)
+    elif col = 2 then Columns (a, b, withCluster c, d, e, f, g, h, i)
+    elif col = 3 then Columns (a, b, c, withCluster d, e, f, g, h, i)
+    elif col = 4 then Columns (a, b, c, d, withCluster e, f, g, h, i)
+    elif col = 5 then Columns (a, b, c, d, e, withCluster f, g, h, i)
+    elif col = 6 then Columns (a, b, c, d, e, f, withCluster g, h, i)
+    elif col = 7 then Columns (a, b, c, d, e, f, g, withCluster h, i)
+    elif col = 8 then Columns (a, b, c, d, e, f, g, h, withCluster i)
+    else board
+    ) board
+
+let handleDirection (col,row) board action =
+    let min a b = if a < b then a else b
+    let max a b = if a > b then a else b
+    (function
+    | Left -> ((max 0 (col-1) , row) , board)
+    | Right -> ((min 8 (col+1) , row) , board)
+    | Up -> ((col , max 0 (row-1)) , board)
+    | Down -> ((col , min 8 (row+1)) , board)
+    | _ -> ((col , row) , board)
+    ) action
+
+let fixDigit n col row board =
+    withCell board col row (fun c -> 
+        if not (exists n c) then
+            FixedValue n
+        else
+            EmptyCell
+    )
+
+let considerDigit n col row board =
+    withCell board col row (fun c -> toggle n c)
+
+
+
+
+let rec evaluate io game =  
+    let userAction = io game
+    let g =
+        (function
+        | (StartGame, SettingUp (position, board)) ->
+            Solving (position, board)
+        | (StartGame, Solved _) ->
+            SettingUp ((0, 0), newBoard)
+        | (_, Solved _) ->
+            game
+        | (EnterDigit n, SettingUp ((col, row), board)) ->
+            SettingUp ((col, row), fixDigit n col row board)
+        | (EnterDigit n, Solving ((col, row), board)) ->
+            Solving ((col, row), considerDigit n col row board)
+        | (direction, SettingUp (position, board)) ->
+            SettingUp (handleDirection position board direction)
+        | (direction, Solving (position, board)) ->
+            Solving (handleDirection position board direction)
+        ) (userAction, game)
+    if userAction = Quit then
+        ()
+    else
+        evaluate io g
+
+
+// and now, the least exciting part of the whole thing.
+
+let printAt column row digit =
+    System.Console.CursorLeft <- column
+    System.Console.CursorTop <- row
+    (function
+    | Nothing -> ()
+    | Value One -> printf "1"
+    | Value Two -> printf "2"
+    | Value Three -> printf "3"
+    | Value Four -> printf "4"
+    | Value Five -> printf "5"
+    | Value Six -> printf "6"
+    | Value Seven -> printf "7"
+    | Value Eight -> printf "8"
+    | Value Nine -> printf "9"
+    ) digit
+
+let printBlock cell col row =
+    (function
+    | Definitely v ->
+        printAt (col + 2) (row + 1) (Value v)
+    | FixedValue v ->
+        let previous = System.Console.ForegroundColor
+        System.Console.ForegroundColor <- System.ConsoleColor.Red
+        printAt (col + 2) (row + 1) (Value v)
+        System.Console.ForegroundColor <- previous
+    | _ ->
+        let rec printDigits count remaining =
+            printAt (col + (count % 3) * 2) (row + (count / 3)) (peek remaining)
+            (function
+            | EmptyCell ->
+                ()
+            | Definitely _ ->
+                ()
+            | _ ->
+                printDigits (count+1) (trimLeft remaining)
+            ) remaining
+        printDigits 0 cell
+    ) cell
+
+let printRow (Cluster (a,b,c,d,e,f,g,h,i)) rowStart =
+    printBlock a 2 rowStart
+    printBlock b 10 rowStart
+    printBlock c 18 rowStart
+    printBlock d 26 rowStart
+    printBlock e 34 rowStart
+    printBlock f 42 rowStart
+    printBlock g 50 rowStart
+    printBlock h 58 rowStart
+    printBlock i 66 rowStart
+
+let printBoard board message =
+    System.Console.Clear () // 4, 12, 20
+    printfn $"""┏━━━━━━━┯━━━━━━━┯━━━━━━━┳━━━━━━━┯━━━━━━━┯━━━━━━━┳━━━━━━━┯━━━━━━━┯━━━━━━━┓
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┠───────┼───────┼───────╂───────┼───────┼───────╂───────┼───────┼───────┨
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┠───────┼───────┼───────╂───────┼───────┼───────╂───────┼───────┼───────┨
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┣━━━━━━━┿━━━━━━━┿━━━━━━━╋━━━━━━━┿━━━━━━━┿━━━━━━━╋━━━━━━━┿━━━━━━━┿━━━━━━━┫
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┠───────┼───────┼───────╂───────┼───────┼───────╂───────┼───────┼───────┨
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┠───────┼───────┼───────╂───────┼───────┼───────╂───────┼───────┼───────┨
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┣━━━━━━━┿━━━━━━━┿━━━━━━━╋━━━━━━━┿━━━━━━━┿━━━━━━━╋━━━━━━━┿━━━━━━━┿━━━━━━━┫
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┠───────┼───────┼───────╂───────┼───────┼───────╂───────┼───────┼───────┨
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┠───────┼───────┼───────╂───────┼───────┼───────╂───────┼───────┼───────┨
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┃       │       │       ┃       │       │       ┃       │       │       ┃
+┗━━━━━━━┷━━━━━━━┷━━━━━━━┻━━━━━━━┷━━━━━━━┷━━━━━━━┻━━━━━━━┷━━━━━━━┷━━━━━━━┛
+{message}
+"""
+    let (Rows (a,b,c,d,e,f,g,h,i)) = viewAsRows board
+    printRow a 1
+    printRow b 5
+    printRow c 9
+    printRow d 13
+    printRow e 17
+    printRow f 21
+    printRow g 25
+    printRow h 29
+    printRow i 33
+
+let showCursor (boardColumn, boardRow) =
+    System.Console.CursorVisible <- true
+    //System.Console.CursorSize <- 100
+    System.Console.CursorLeft <- 4 + 8 * boardColumn
+    System.Console.CursorTop <- 2 + 4 * boardRow
+
+let output game =
+    // this entire function ... is a side-effect!!
+    (function
+    | Solved board ->
+        System.Console.ForegroundColor <- System.ConsoleColor.Green
+        printBoard board "Congratulations!  The puzzle is solved.  Press <Enter> to set up a new one."
+        System.Console.ResetColor ()
+    | SettingUp (position, board) ->
+        printBoard board """Use  ← → ↑ ↓  keys to move around.  Type a digit to set up the puzzle.
+Press <Enter> to begin solving, and <Q> to quit."""
+        showCursor position
+    | Solving (position, board) ->
+        printBoard board """Use  ← → ↑ ↓  keys to move around.  Type a digit to add or remove it from consideration.
+Press <Q> to quit."""
+        showCursor position
+    ) game
+    game
+
+let rec input game =
+    let read = System.Console.ReadKey true
+    if read.Key = System.ConsoleKey.Enter then
+        StartGame
+    elif read.Key = System.ConsoleKey.LeftArrow then
+        Left
+    elif read.Key = System.ConsoleKey.RightArrow then
+        Right
+    elif read.Key = System.ConsoleKey.UpArrow then
+        Up
+    elif read.Key = System.ConsoleKey.DownArrow then
+        Down
+    elif read.KeyChar = '1' then
+        EnterDigit One
+    elif read.KeyChar = '2' then
+        EnterDigit Two
+    elif read.KeyChar = '3' then
+        EnterDigit Three
+    elif read.KeyChar = '4' then
+        EnterDigit Four
+    elif read.KeyChar = '5' then
+        EnterDigit Five
+    elif read.KeyChar = '6' then
+        EnterDigit Six
+    elif read.KeyChar = '7' then
+        EnterDigit Seven
+    elif read.KeyChar = '8' then
+        EnterDigit Eight
+    elif read.KeyChar = '9' then
+        EnterDigit Nine
+    elif read.Key = System.ConsoleKey.Q then
+        Quit
+    else
+        (output >> input) game
+
+[<EntryPoint>]
+let main _ =
+    evaluate (output >> input) (SettingUp ((0,0), newBoard))
+    0
